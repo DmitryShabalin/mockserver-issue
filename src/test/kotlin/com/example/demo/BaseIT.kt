@@ -8,21 +8,30 @@ import org.mockserver.client.MockServerClient
 import org.mockserver.model.HttpRequest.request
 import org.mockserver.model.HttpResponse.response
 import org.mockserver.verify.VerificationTimes
+import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.ApplicationContextInitializer
+import org.springframework.context.ConfigurableApplicationContext
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.test.context.ContextConfiguration
 import org.springframework.test.context.junit4.SpringRunner
 import org.springframework.web.client.RestTemplate
 import org.testcontainers.containers.MockServerContainer
+import org.testcontainers.containers.output.Slf4jLogConsumer
+import java.util.concurrent.ConcurrentHashMap
 
 @RunWith(SpringRunner::class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ContextConfiguration(initializers = [ContainerInitializer::class])
 abstract class BaseIT {
 
-    @Rule
-    @JvmField
-    final val mockServer = MockServerContainer()
-
-    val mockServerClient by lazy { MockServerClient(mockServer.containerIpAddress, mockServer.serverPort) }
-
+    init {
+        ContainerInitializer.start()
+    }
+    @Autowired
+    lateinit var mockServerClient: MockServerClient
     var restTemplate = RestTemplate()
 
     @Before
@@ -159,8 +168,43 @@ abstract class BaseIT {
 
     fun ping() {
         restTemplate.getForEntity(
-            "http://${mockServer.containerIpAddress}:${mockServer.serverPort}",
+            "http://${ContainerHolder.container().containerIpAddress}:${ContainerHolder.container().serverPort}",
             String::class.java
         )
     }
+}
+
+@Configuration
+class MockServerClientConfig {
+    @Bean
+    fun mockServerClient() = MockServerClient(
+        ContainerHolder.container().containerIpAddress,
+        ContainerHolder.container().serverPort
+    )
+}
+
+class ContainerInitializer : ApplicationContextInitializer<ConfigurableApplicationContext> {
+
+    override fun initialize(p0: ConfigurableApplicationContext) {
+        println("do nothing")
+    }
+
+    companion object {
+        private val RUNNING_CONTAINERS = ConcurrentHashMap<String, MockServerContainer>()
+
+        fun start() {
+            val container = ContainerHolder.container()
+            container.start()
+            container.followOutput(Slf4jLogConsumer(LoggerFactory.getLogger("mock-container")))
+            RUNNING_CONTAINERS["mock-container"] = container
+        }
+    }
+}
+
+object ContainerHolder {
+    private val mockServerContainer: MockServerContainer by lazy { MockServerContainer() }
+
+    fun name() = "mockServer"
+
+    fun container() = mockServerContainer
 }
